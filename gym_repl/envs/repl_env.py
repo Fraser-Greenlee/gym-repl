@@ -1,22 +1,22 @@
 from gym import Env
-from gym.spaces import Discrete, Tuple
+from gym.spaces import Discrete, Box
 from numpy import inf
 from six import StringIO
 import sys
 
 
 class ReplEnv(Env):
-    metadata = {'render.modes': ['human']}
-    action_space = Discrete(4)
-    act_code_map = ['1', '+', '-', 'run']
+    action_space = Discrete(4)  # write 1, write +, write -, run
+    act_code_map = ['1', '+', '-', 'clear']
     current_code = ''
-    observation_space = Tuple(*[Discrete(13) for _ in range(10)])  # 0-9,-, ,E for length 10
+
+    observation_space = Box(0, 12, shape=(1, 10), dtype=int)
     current_output = ' ' * 10
-    output_obs_map = {'-': 11, ' ':12, 'E':13}
-    output_obs_map = {str(i): i for i in range(10)}
+    output_obs_map = {'-': 11, ' ': 12, 'E': 13}
+    output_obs_map.update({str(i): i for i in range(10)})
 
     def __init__(self):
-        super(ReplEnv, self).__init__()
+        self.metadata = {'render.modes': ['human']}
 
     @staticmethod
     def _run_expression(expr):
@@ -25,24 +25,24 @@ class ReplEnv(Env):
         sys.stdout = stdout
         try:
             exec('print({0})'.format(expr))
-        except Exception:
+        except SyntaxError:
+            sys.stdout = old
             return 'E'
         sys.stdout = old
-        return stdout.getvalue()[:10]
+        return stdout.getvalue()[:11][:-1]
 
     def _run_code(self):
         self.current_output = self._run_expression(self.current_code)
 
     def step(self, action):
-        code_token = act_code_map(action)
-        if code_token == 'run':
+        code_token = self.act_code_map[action]
+        if code_token == 'clear':
             self.current_code = ''
-            self._run_code()
         elif len(self.current_code) >= 10:
             self.current_code = ''
-            self.current_output = 'E' 
         else:
             self.current_code += code_token
+        self._run_code()
         obs = self.observe()
         reward = 0
         info = {}
@@ -56,13 +56,13 @@ class ReplEnv(Env):
 
     def render(self, mode='human'):
         outfile = sys.stdout
-        inp = '>> ' + self.current_code
+        inp = '>>> ' + self.current_code
         outfile.write(inp + '\n')
         out = self.current_output
-        outfile.write(out)
+        outfile.write(out + '\n')
 
     def reset(self):
         self.current_code = ''
         self.current_output = ''
-        obs = self._observe()
+        obs = self.observe()
         return obs
