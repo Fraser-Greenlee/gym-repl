@@ -1,8 +1,10 @@
 from gym import Env
 from gym.spaces import Discrete, Box
-from numpy import inf
+import numpy as np
 from six import StringIO
 import sys
+
+EMPTY_STATE = np.full((10), 12)
 
 
 class ReplEnv(Env):
@@ -11,15 +13,24 @@ class ReplEnv(Env):
     current_code = ''
 
     observation_space = Box(0, 12, shape=(1, 10), dtype=int)
-    current_output = ' ' * 10
-    output_obs_map = {'-': 11, ' ': 12, 'E': 13}
-    output_obs_map.update({str(i): i for i in range(10)})
+    state = EMPTY_STATE.copy()
+    stdout_state_map = dict({'-': 11, ' ': 12, 'E': 13}, **{str(i): i for i in range(10)})
+    state_stdout_map = dict((reversed(item) for item in stdout_state_map.items()))
 
     def __init__(self):
         self.metadata = {'render.modes': ['human']}
 
-    @staticmethod
-    def _run_expression(expr):
+    def _remove_newline(s, maxlen):
+        return s[:maxlen + 1][:-1]
+
+    def _format_output(stdout):
+        out = _remove_newline(stdout, 10)
+        new_state = EMPTY_STATE.copy()
+        for i, char in enumerate(out):
+            new_state[i] = stdout_state_map[char]
+        return new_state
+
+    def _run_expression(self, expr):
         old = sys.stdout
         stdout = StringIO()
         sys.stdout = stdout
@@ -29,10 +40,10 @@ class ReplEnv(Env):
             sys.stdout = old
             return 'E'
         sys.stdout = old
-        return stdout.getvalue()[:11][:-1]
+        return self._format_output(stdout.getvalue())
 
     def _run_code(self):
-        self.current_output = self._run_expression(self.current_code)
+        self.state = self._run_expression(self.current_code)
 
     def step(self, action):
         code_token = self.act_code_map[action]
@@ -43,26 +54,19 @@ class ReplEnv(Env):
         else:
             self.current_code += code_token
         self._run_code()
-        obs = self.observe()
         reward = 0
         info = {}
         done = False
-        return obs, reward, done, info
-
-    def observe(self):
-        return [
-            self.output_obs_map[char] for char in self.current_output
-        ]
+        return self.state, reward, done, info
 
     def render(self, mode='human'):
         outfile = sys.stdout
         inp = '>>> ' + self.current_code
         outfile.write(inp + '\n')
-        out = self.current_output
+        out = ''.join([state_stdout_map[i] for i in self.state])
         outfile.write(out + '\n')
 
     def reset(self):
         self.current_code = ''
-        self.current_output = ''
-        obs = self.observe()
-        return obs
+        self.state = EMPTY_STATE.copy()
+        return self.state
