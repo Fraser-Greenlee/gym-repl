@@ -1,10 +1,13 @@
+import string
+import numpy as np
 from gym import Env
 from gym.spaces import Discrete, Box
-import numpy as np
 from six import StringIO
 import sys
 
-EMPTY_STATE = np.full((10), 12)
+CHARS = string.digits + '-E '
+OUTPUT_LEN = 10
+EMPTY_STATE = ' ' * OUTPUT_LEN
 
 
 class ReplEnv(Env):
@@ -12,62 +15,62 @@ class ReplEnv(Env):
     act_code_map = ['1', '+', '-', 'clear']
     current_code = ''
 
-    observation_space = Box(0, 12, shape=(10, 0), dtype=int)
-    state = EMPTY_STATE.copy()
-    stdout_state_map = dict({'-': 10, 'E': 11, ' ': 12}, **{str(i): i for i in range(10)})
-    state_stdout_map = dict((reversed(item) for item in stdout_state_map.items()))
+    observation_space = Box(0, len(CHARS)-1, shape=(OUTPUT_LEN, 1), dtype=int)
+    state = EMPTY_STATE
 
     def __init__(self):
-        self.metadata = {'render.modes': ['human']}
+        self.metadata = {'render.modes': ['human', 'ansi']}
 
     @staticmethod
-    def _remove_newline(s, maxlen):
-        return s[:maxlen + 1][:-1]
+    def _format_output(out):
+        no_newline = out[:-1]
+        if len(out) > OUTPUT_LEN:
+            return no_newline[:OUTPUT_LEN + 1]
+        return no_newline + ' ' * (OUTPUT_LEN - len(no_newline))
 
-    def _run_expression(self, expr):
+    def _run_code(self, code):
         old = sys.stdout
         stdout = StringIO()
         sys.stdout = stdout
         try:
-            exec('print({0})'.format(expr))
+            exec('print({0})'.format(code))
+            out = stdout.getvalue()
         except SyntaxError:
-            sys.stdout = old
-            return 'E'
+            out = 'E\n'
         sys.stdout = old
-        return self._remove_newline(stdout.getvalue(), 10)
+        return self._format_output(out)
 
-    def _format_output(self, stdout_str):
-        new_state = EMPTY_STATE.copy()
-        for i, char in enumerate(stdout_str):
-            new_state[i] = self.stdout_state_map[char]
-        return new_state
-
-    def _run_code(self):
-        stdout_str = self._run_expression(self.current_code)
-        self.state = self._format_output(stdout_str)
+    @property
+    def encoded_state(self):
+        one_hot = np.zeros((OUTPUT_LEN, len(CHARS)))
+        one_hot[np.arange(OUTPUT_LEN), [CHARS.index(c) for c in self.state]] = 1
+        return one_hot.reshape(-1)
 
     def step(self, action):
         code_token = self.act_code_map[action]
         if code_token == 'clear':
             self.current_code = ''
-        elif len(self.current_code) >= 10:
+        elif len(self.current_code) >= OUTPUT_LEN:
             self.current_code = ''
         else:
             self.current_code += code_token
-        self._run_code()
+        self.state = self._run_code(self.current_code)
         reward = 0
         info = {}
         done = False
-        return self.state, reward, done, info
+        return self.encoded_state, reward, done, info
 
-    def render(self, mode='human'):
-        outfile = sys.stdout
-        inp = '>>> ' + self.current_code
-        outfile.write(inp + '\n')
-        out = ''.join([state_stdout_map[i] for i in self.state])
-        outfile.write(out + '\n')
+    def render(self, mode='human', close=False):
+        if mode not in self.metadata['render.modes']:
+            raise RuntimeError('Render mode %s not a valid.' % mode)
+        if close:
+            return
+
+        outfile = StringIO() if mode == "ansi" else sys.stdout
+        outfile.write('>>> {}\n{}\n'.format(self.current_code, self.state))
+        return outfile
 
     def reset(self):
         self.current_code = ''
-        self.state = EMPTY_STATE.copy()
-        return self.state
+        self.state = EMPTY_STATE
+        return self.encoded_state
